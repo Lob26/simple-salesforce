@@ -1,0 +1,10 @@
+httpx[http2,socks]
+pydantic
+ruff
+zeep
+pyjwt[crypto]
+more-itertools
+starlette
+pytest
+pytest-asyncio
+mypy

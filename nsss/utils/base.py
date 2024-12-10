@@ -1,5 +1,5 @@
 # pyright: reportArgumentType=false
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Hashable, Iterable, Mapping, Sequence
 from datetime import date as date_, datetime
 from numbers import Number
 from typing import Any, Literal, Optional, TypedDict
@@ -7,6 +7,7 @@ from urllib.parse import quote
 from xml.etree.ElementTree import XML as fromstring
 
 import httpx
+from httpx._utils import URLPattern
 
 from .exceptions import exception_handler
 
@@ -25,19 +26,31 @@ def to_mount(proxies: Proxies) -> dict[str, httpx.AsyncHTTPTransport]:
     }
 
 
-type KwargsAny = date_ | Iterable | Number | None
+def to_url_mount(proxies: Proxies) -> dict[URLPattern, httpx.AsyncHTTPTransport]:
+    return {
+        URLPattern(protocol): httpx.AsyncHTTPTransport(proxy=proxy)
+        for protocol, proxy in proxies.items()
+    }
+
+
+type KwargsAny = date_ | str | Iterable[KwargsAny] | Number | None
 type URLMethod = Literal["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]
 type JsonType = None | int | str | bool | Sequence[JsonType] | Mapping[str, JsonType]
+type SFOperations = Literal["delete", "hardDelete", "insert", "query", "queryAll", "update", "upsert"],
 
 
 class CallableSF:
     client: httpx.AsyncClient
+    parse_float: Optional[Callable[[str], Any]]
+    object_pairs_hook: Callable[
+        [Sequence[tuple[Hashable, Any]]], Mapping[Hashable, Any]
+    ] = dict[Hashable, Any]
 
     async def call_salesforce(
         self,
         method: URLMethod,
         endpoint: str,
-        headers: httpx.Headers,
+        headers: httpx.Headers | None = None,
         **kwargs: KwargsAny,
     ) -> httpx.Response:
         """Performs an HTTP request to Salesforce and raises an error for non-2xx responses.
@@ -46,7 +59,7 @@ class CallableSF:
             url (str): The Salesforce API endpoint to call.
             method (Literal): The HTTP method to use (e.g., "GET", "POST").
             headers (httpx.Headers): HTTP headers to include in the request.
-            **kwargs (Any): Additional arguments passed to `requests.request`.
+            **kwargs (Any): Additional arguments passed to `httpx.request`.
 
         Returns:
             requests.Response: The response object from the HTTP request.
@@ -56,12 +69,11 @@ class CallableSF:
             CustomException: For non-2xx HTTP status codes.
 
         Examples:
-            >>> session = requests.Session()
-            >>> headers = {"Authorization": "Bearer token"}
-            >>> response = call_salesforce(
-            ...     "https://example.salesforce.com", "GET", session, headers
-            ... )
+            >>> response = await call_salesforce("GET", "https://example.com")
+            >>> response.status_code
+            200
         """
+        headers = headers or httpx.Headers()
 
         headers.update(self.client.headers.copy())
         headers.update(kwargs.pop("headers", dict[str, Any]()))

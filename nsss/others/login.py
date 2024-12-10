@@ -125,7 +125,7 @@ def SalesforceLogin(**kwargs: Any) -> tuple[str, str]:  # NOSONAR
             token_login(
                 f"https://{domain}.salesforce.com/services/oauth2/token",
                 {
-                    "grant_type": "password",
+                    "grant_type": "client_credentials",
                     "client_id": consumer_key,
                     "client_secret": consumer_secret,
                     "username": html.unescape(username),

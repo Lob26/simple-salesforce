@@ -26,10 +26,10 @@ from starlette.status import HTTP_401_UNAUTHORIZED
 from nsss.__version__ import DEFAULT_API_VERSION
 from nsss.api import Bulk2SFHandler, BulkSFHandler, CompositeSFHandler, TypeSF
 from nsss.others import SalesforceLogin, SfdcMetadataApi
-from nsss.utils import CallableSF, exception_handler, to_mount
+from nsss.utils import CallableSF, exception_handler, to_url_mount
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Callable, Hashable, Iterator, Sequence
 
     from httpx import Response
 
@@ -40,10 +40,13 @@ if TYPE_CHECKING:
         URLMethod,
     )
 
-logger = logging.getLogger(__name__)
+    K = TypeVar("K", bound=Hashable)
+    V = TypeVar("V", bound=Any)
+else:
+    K = TypeVar("K")
+    V = TypeVar("V")
 
-K = TypeVar("K")
-V = TypeVar("V")
+logger = logging.getLogger(__name__)
 
 
 class QueryResult[T: Mapping[str, Any]](TypedDict):
@@ -64,9 +67,9 @@ class Salesforce(CallableSF):
         proxies: Optional[Proxies] = None, session: Optional[Client] = None,
         client_id: Optional[str] = None, domain: str = "login",
         parse_float: Optional[Callable[[str], Any]] = None,
-        object_pairs_hook: Callable[[list[tuple[K, V]]], Mapping[K, V]] = dict[K, V],
+        object_pairs_hook: Callable[[Sequence[tuple[K, V]]], Mapping[K, V]] = dict[K, V],
         version: str = DEFAULT_API_VERSION,
-    ):
+    ) -> None:
         """
         Password Authentication
         ---
@@ -95,9 +98,9 @@ class Salesforce(CallableSF):
         proxies: Optional[Proxies] = None, session: Optional[Client] = None,
         client_id: Optional[str] = None, domain: str = "login",
         parse_float: Optional[Callable[[str], Any]] = None,
-        object_pairs_hook: Callable[[list[tuple[K, V]]], Mapping[K, V]] = dict[K, V],
+        object_pairs_hook: Callable[[Sequence[tuple[K, V]]], Mapping[K, V]] = dict[K, V],
         version: str = DEFAULT_API_VERSION,
-    ):
+    ) -> None:
         """
         IP Filtering Authentication
         ---
@@ -126,9 +129,9 @@ class Salesforce(CallableSF):
         proxies: Optional[Proxies] = None, session: Optional[Client] = None,
         client_id: Optional[str] = None, domain: str = "login",
         parse_float: Optional[Callable[[str], Any]] = None,
-        object_pairs_hook: Callable[[list[tuple[K, V]]], Mapping[K, V]] = dict[K, V],
+        object_pairs_hook: Callable[[Sequence[tuple[K, V]]], Mapping[K, V]] = dict[K, V],
         version: str = DEFAULT_API_VERSION,
-    ):
+    ) -> None:
         """
         OAuth 2.0 Password Authentication
         ---
@@ -158,9 +161,9 @@ class Salesforce(CallableSF):
         proxies: Optional[Proxies] = None, session: Optional[Client] = None,
         client_id: Optional[str] = None, domain: str = "login",
         parse_float: Optional[Callable[[str], Any]] = None,
-        object_pairs_hook: Callable[[list[tuple[K, V]]], Mapping[K, V]] = dict[K, V],
+        object_pairs_hook: Callable[[Sequence[tuple[K, V]]], Mapping[K, V]] = dict[K, V],
         version: str = DEFAULT_API_VERSION,
-    ):
+    ) -> None:
         """
         OAuth 2.0 JWT-Bearer Token Authentication
         ---
@@ -188,10 +191,10 @@ class Salesforce(CallableSF):
     def __init__(self, *,  username: str, consumer_key: str, privatekey: str,
         proxies: Optional[Proxies] = None, session: Optional[Client] = None,
         client_id: Optional[str] = None, domain: str = "login",
-        parse_float: Optional[Callable[[str], Any]] = None,
-        object_pairs_hook: Callable[[list[tuple[K, V]]], Mapping[K, V]] = dict[K, V],
+        parse_float: Callable[[str], Any] | None = None,
+        object_pairs_hook: Callable[[Sequence[tuple[K, V]]], Mapping[K, V]] = dict[K, V],
         version: str = DEFAULT_API_VERSION,
-    ):
+    ) -> None:
         """
         OAuth 2.0 JWT-Bearer Token Authentication
         ---
@@ -218,9 +221,9 @@ class Salesforce(CallableSF):
     def __init__(self, *,  consumer_key: str, consumer_secret: str, domain: str = "login",
         proxies: Optional[Proxies] = None, session: Optional[Client] = None, client_id: Optional[str] = None,
         parse_float: Optional[Callable[[str], Any]] = None,
-        object_pairs_hook: Callable[[list[tuple[K, V]]], Mapping[K, V]] = dict[K, V],
+        object_pairs_hook: Callable[[Sequence[tuple[K, V]]], Mapping[K, V]] = dict[K, V],
         version: str = DEFAULT_API_VERSION,
-    ):
+    ) -> None:
         """
         OAuth 2.0 Client Credentials Authentication
         ---
@@ -247,9 +250,9 @@ class Salesforce(CallableSF):
         proxies: Optional[Proxies] = None, session: Optional[Client] = None,
         client_id: Optional[str] = None, domain: str = "login",
         parse_float: Optional[Callable[[str], Any]] = None,
-        object_pairs_hook: Callable[[list[tuple[K, V]]], Mapping[K, V]] = dict[K, V],
+        object_pairs_hook: Callable[[Sequence[tuple[K, V]]], Mapping[K, V]] = dict[K, V],
         version: str = DEFAULT_API_VERSION,
-    ):
+    ) -> None:
         """
         Direct Session Authentication
         ---
@@ -276,9 +279,9 @@ class Salesforce(CallableSF):
         proxies: Optional[Proxies] = None, session: Optional[Client] = None,
         client_id: Optional[str] = None, domain: str = "login",
         parse_float: Optional[Callable[[str], Any]] = None,
-        object_pairs_hook: Callable[[list[tuple[K, V]]], Mapping[K, V]] = dict[K, V],
+        object_pairs_hook: Callable[[Sequence[tuple[K, V]]], Mapping[K, V]] = dict[K, V],
         version: str = DEFAULT_API_VERSION,
-    ):
+    ) -> None:
         """
         Direct Session Authentication
         ---
@@ -310,24 +313,25 @@ class Salesforce(CallableSF):
         proxies: Optional[Proxies] = None, session: Optional[Client] = None,
         client_id: Optional[str] = None, domain: str = "login",
         parse_float: Optional[Callable[[str], Any]] = None,
-        object_pairs_hook: Callable[[list[tuple[K, V]]], Mapping[K, V]] = dict[K, V],
-    ):  # fmt:skip
+        object_pairs_hook: Callable[[Sequence[tuple[K, V]]], Mapping[K, V]] = dict[K, V],
+    ) -> None:  # fmt:skip
         """Initialize the instance with the given parameters."""
 
         self.sf_version = version
         self.domain = domain
-        _proxies = to_mount(proxies) if proxies else None
         self.client = session or Client(
-            mounts=_proxies,
             follow_redirects=True,
             base_url=f"https://{self.sf_instance}/services/",
         )
-        self.proxies = _proxies
+        _proxies = None
+        if proxies:
+            _proxies = to_url_mount(proxies)
+            self.client._mounts.update(_proxies)  # pyright: ignore[reportPrivateUsage]
 
         args = dict(
             session=self.client,
             sf_version=self.sf_version,
-            proxies=self.proxies,
+            proxies=_proxies,
             domain=self.domain,
         )
 
@@ -364,6 +368,9 @@ class Salesforce(CallableSF):
             self._salesforce_login_partial = partial(SalesforceLogin, **args)
         self._refresh_session()
         self._generate_headers()
+
+        self.object_pairs_hook = object_pairs_hook  # type: ignore
+        self.parse_float = parse_float
 
     @staticmethod
     def _populate_args(
@@ -455,7 +462,9 @@ class Salesforce(CallableSF):
         self.session_id, self.sf_instance = self._salesforce_login_partial()
 
     @staticmethod
-    def parse_api_usage(sforce_limit_info: str):
+    def parse_api_usage(
+        sforce_limit_info: str,
+    ) -> dict[str, tuple[int | str, ...] | None]:
         """Parse API usage and limits out of the Sforce-Limit-Info header.
 
         Arguments:
@@ -563,7 +572,10 @@ class Salesforce(CallableSF):
         )
 
         try:
-            return response.json()
+            return response.json(
+                object_pairs_hook=self.object_pairs_hook,
+                parse_float=self._parse_float,
+            )
         except json.JSONDecodeError:
             return response.text
 
@@ -596,7 +608,10 @@ class Salesforce(CallableSF):
         )
 
         try:
-            return response.json()
+            return response.json(
+                object_pairs_hook=self.object_pairs_hook,
+                parse_float=self._parse_float,
+            )
         except json.JSONDecodeError:
             return response.text
 
@@ -887,7 +902,9 @@ class Salesforce(CallableSF):
         async_id, state = self.mdapi.deploy(zipfile, sandbox, **kwargs)
         return {"asyncId": async_id, "state": state}
 
-    def check_deploy_status(self, async_id: str, **kwargs: KwargsAny):
+    def check_deploy_status(
+        self, async_id: str, **kwargs: KwargsAny
+    ) -> dict[str, str | Mapping[str, Any] | None]:
         """
         Check on the progress of a file-based deploymend via the Metadata API
         Wrapper for `SfdcMetaDataApi.check_deploy_status(...)`
@@ -932,7 +949,7 @@ class Salesforce(CallableSF):
         for the REST API.
         """
 
-    def __getattr__(self, name: str) -> BulkSFHandler | Bulk2SFHandler | CompositeSFHandler | TypeSF:  # fmt:skip
+    def __getattr__(self, name: str) -> Any | BulkSFHandler | Bulk2SFHandler | CompositeSFHandler | TypeSF:  # fmt:skip
         """
         Returns the appropriate handler for the given attribute.
 
@@ -947,17 +964,29 @@ class Salesforce(CallableSF):
             * TypeSF: If the attribute is a Salesforce object type
         """
         if name.startswith("__"):
-            return_ = super().__getattr__(name)  # pyright: ignore[reportAttributeAccessIssue]
+            return_: Any = super().__getattr__(name)  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType]
         elif name == "bulk":
             # Deal with bulk API functions
-            return_ = BulkSFHandler()
+            return_ = BulkSFHandler(
+                session_id=self.session_id,
+                bulk_url=f"https://{self.sf_instance}/services/async/{self.sf_version}/",
+            )
         elif name == "bulk2":
             # Deal with bulk v2 API functions
-            return_ = Bulk2SFHandler()
+            return_ = Bulk2SFHandler(
+                session_id=self.session_id,
+                bulk2_url=f"https://{self.sf_instance}/services/data/v{self.sf_version}/jobs/",
+            )
         elif name == "composite":
             # Deal with composite API functions
-            return_ = CompositeSFHandler()
+            return_ = CompositeSFHandler(
+                session_id=self.session_id,
+                composite_url=f"https://{self.sf_instance}/services/data/v{self.sf_version}/composite/",
+            )
         else:
             # Deal with standard SF object API functions
-            return_ = TypeSF()
+            return_ = TypeSF(
+                session_id=self.session_id,
+                object_url=f"https://{self.sf_instance}/services/data/v{self.sf_version}/sobjects/{name}/",
+            )
         return return_

@@ -1,19 +1,12 @@
 """All exceptions for Simple Salesforce"""
-from typing import Union
 
 
 class SalesforceError(Exception):
     """Base Salesforce API exception"""
 
-    message: str = \
-        'Unknown error occurred for {url}. Response content: {content}'
+    message: str = "Unknown error occurred for {url}. Response content: {content}"
 
-    def __init__(
-            self,
-            url: str,
-            status: int,
-            resource_name: str,
-            content: bytes):
+    def __init__(self, url: str, status: int, resource_name: str, content: bytes):
         """Initialize the SalesforceError exception
 
         SalesforceError is the base class of exceptions in simple-salesforce
@@ -46,7 +39,7 @@ class SalesforceMoreThanOneRecord(SalesforceError):
     response body contains the list of matching records.
     """
 
-    message = 'More than one record for {url}. Response content: {content}'
+    message = "More than one record for {url}. Response content: {content}"
 
 
 class SalesforceMalformedRequest(SalesforceError):
@@ -56,7 +49,7 @@ class SalesforceMalformedRequest(SalesforceError):
     contains an error.
     """
 
-    message = 'Malformed request {url}. Response content: {content}'
+    message = "Malformed request {url}. Response content: {content}"
 
 
 class SalesforceExpiredSession(SalesforceError):
@@ -66,7 +59,7 @@ class SalesforceExpiredSession(SalesforceError):
     body contains the message and errorCode.
     """
 
-    message = 'Expired session for {url}. Response content: {content}'
+    message = "Expired session for {url}. Response content: {content}"
 
 
 class SalesforceRefusedRequest(SalesforceError):
@@ -76,7 +69,7 @@ class SalesforceRefusedRequest(SalesforceError):
     appropriate permissions.
     """
 
-    message = 'Request refused for {url}. Response content: {content}'
+    message = "Request refused for {url}. Response content: {content}"
 
 
 class SalesforceResourceNotFound(SalesforceError):
@@ -86,11 +79,10 @@ class SalesforceResourceNotFound(SalesforceError):
     verify that there are no sharing issues.
     """
 
-    message = 'Resource {name} Not Found. Response content: {content}'
+    message = "Resource {name} Not Found. Response content: {content}"
 
     def __str__(self) -> str:
-        return self.message.format(name=self.resource_name,
-                                   content=self.content)
+        return self.message.format(name=self.resource_name, content=self.content)
 
 
 class SalesforceAuthenticationFailed(SalesforceError):
@@ -98,11 +90,7 @@ class SalesforceAuthenticationFailed(SalesforceError):
     Thrown to indicate that authentication with Salesforce failed.
     """
 
-    def __init__(
-        self,
-        code: Union[str, int, None],
-        message: str
-        ):
+    def __init__(self, code: str | int | None, message: str):
         # TODO exceptions don't seem to be using parent constructors at all.
         # this should be fixed.
         # pylint: disable=super-init-not-called
@@ -110,7 +98,7 @@ class SalesforceAuthenticationFailed(SalesforceError):
         self.message = message
 
     def __str__(self) -> str:
-        return f'{self.code}: {self.message}'
+        return f"{self.code}: {self.message}"
 
 
 class SalesforceGeneralError(SalesforceError):
@@ -118,7 +106,7 @@ class SalesforceGeneralError(SalesforceError):
     A non-specific Salesforce error.
     """
 
-    message = 'Error Code {status}. Response content: {content}'
+    message = "Error Code {status}. Response content: {content}"
 
     def __str__(self) -> str:
         return self.message.format(status=self.status, content=self.content)

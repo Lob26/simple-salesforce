@@ -140,10 +140,10 @@ def exception_handler(result: Response, name: str = "") -> NoReturn:
     """Exception router. Determines which error to raise for bad results"""
 
     try:
-        response_content = result.json()
-    except Exception:
-        response_content = result.text
+        response_content = str(result.json()).encode()
+    except ValueError:
+        response_content = result.text.encode()
 
     exc_cls = _exc_map(result.status_code)
 
-    raise exc_cls(result.url, result.status_code, name, response_content)
+    raise exc_cls(str(result.url), result.status_code, name, response_content)

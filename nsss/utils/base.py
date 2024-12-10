@@ -36,7 +36,7 @@ def to_url_mount(proxies: Proxies) -> dict[URLPattern, httpx.AsyncHTTPTransport]
 type KwargsAny = date_ | str | Iterable[KwargsAny] | Number | None
 type URLMethod = Literal["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]
 type JsonType = None | int | str | bool | Sequence[JsonType] | Mapping[str, JsonType]
-type SFOperations = Literal["delete", "hardDelete", "insert", "query", "queryAll", "update", "upsert"],
+type SFOperations = Literal["delete", "hardDelete", "insert", "query", "queryAll", "update", "upsert"]  # fmt:skip
 
 
 class CallableSF:

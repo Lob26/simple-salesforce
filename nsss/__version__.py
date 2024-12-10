@@ -14,3 +14,4 @@ __keywords__ = "python salesforce salesforce.com async httpx pydantic"
 __python_version__ = ">=3.12"
 
 DEFAULT_API_VERSION = "59.0"
+DEFAULT_CLIENT_ID_PREFIX = "simple-salesforce"

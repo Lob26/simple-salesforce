@@ -16,8 +16,7 @@ from nsss.others.messages import (
     DEPLOY_MSG,
     RETRIEVE_MSG,
 )
-from nsss.utils import KwargsAny
-from nsss.utils.base import CallableSF
+from nsss.utils import CallableSF, KwargsAny
 
 TEXTXML = "text/xml"
 MTSTATUS = "mt:status"

@@ -1,29 +1,25 @@
-import asyncio
 import json
-from typing import TYPE_CHECKING, Literal, TypeVar, cast, overload
+from collections.abc import (
+    Callable,
+    Hashable,
+    Iterator,
+    Mapping,
+    Sequence,
+)
+from typing import (
+    Any,
+    Literal,
+    TypeVar,
+    cast,
+    overload,
+)
 
-from httpx import AsyncClient as Client
+from httpx import Client
 
-from nsss.utils import CallableSF, Proxies, to_url_mount
+from nsss.utils import CallableSF, JsonType, Proxies, SFOperation, to_url_mount
 
-if TYPE_CHECKING:
-    from collections.abc import (
-        AsyncIterable,
-        Callable,
-        Hashable,
-        Iterable,
-        Mapping,
-        Sequence,
-    )
-    from typing import Any
-
-    from nsss.utils import JsonType, SFOperations
-
-    K = TypeVar("K", bound=Hashable)
-    V = TypeVar("V", bound=Any)
-else:
-    K = TypeVar("K")
-    V = TypeVar("V")
+K = TypeVar("K", bound=Hashable)
+V = TypeVar("V", bound=Any)
 
 
 class BulkSFHandler:
@@ -46,7 +42,7 @@ class BulkSFHandler:
             * session_id: The session ID for authenticating to Salesforce
             * bulk_url: The URL to the Salesforce Bulk API
             * proxies: The optional map of scheme to proxy server
-            * session: Custom httpx.AsyncClient instance to use for requests.
+            * session: Custom httpx.Client instance to use for requests.
                 This enables the use of httpx features not otherwise exposed by the library.
         """
         self.client = session or Client(follow_redirects=True)
@@ -80,10 +76,8 @@ class BulkSFType(CallableSF):
         client: Client,
         object_name: str,
         parse_float: Callable[[str], Any] | None = None,
-        object_pairs_hook: Callable[[Sequence[tuple[K, V]]], Mapping[K, V]] = dict[
-            K, V
-        ],
-    ) -> None:
+        object_pairs_hook: Callable[[Sequence[tuple[K, V]]], Mapping[K, V]] = dict[K, V],
+    ) -> None:  # fmt:skip
         """
         Builds the instance with the client data
         ---
@@ -91,7 +85,7 @@ class BulkSFType(CallableSF):
         Initialize the instance with the given parameters
 
         Arguments:
-            * client: The httpx.AsyncClient instance to use for requests
+            * client: The httpx.Client instance to use for requests
             * object_name: The name of the object to interact with
         """
         self.object_name = object_name
@@ -136,7 +130,7 @@ class BulkSFType(CallableSF):
 
     def _create_job(
         self,
-        operation: SFOperations,
+        operation: SFOperation,
         use_serial: bool,
         external_id_field: str | None = None,
     ) -> JsonType:
@@ -160,7 +154,7 @@ class BulkSFType(CallableSF):
         if operation == "upsert":
             payload["externalIdFieldName"] = external_id_field
 
-        return asyncio.run(
+        return (
             self.call_salesforce(
                 method="POST", endpoint="job", data=json.dumps(payload, allow_nan=False)
             )
@@ -178,7 +172,7 @@ class BulkSFType(CallableSF):
             * job_id: The ID of the job to close
         """
 
-        return asyncio.run(
+        return (
             self.call_salesforce(
                 method="POST",
                 endpoint=f"job/{job_id}",
@@ -198,7 +192,7 @@ class BulkSFType(CallableSF):
             * job_id: The ID of the job to get
         """
 
-        return asyncio.run(
+        return (
             self.call_salesforce(
                 method="GET",
                 endpoint=f"job/{job_id}",
@@ -209,7 +203,7 @@ class BulkSFType(CallableSF):
         )
 
     def _add_batch(
-        self, job_id: str, data: list[Mapping[str, Any]], operation: SFOperations
+        self, job_id: str, data: list[Mapping[str, Any]], operation: SFOperation
     ):
         """
         Add a set of data as a batch to an existing job.
@@ -229,7 +223,7 @@ class BulkSFType(CallableSF):
             else data
         )
 
-        return asyncio.run(
+        return (
             self.call_salesforce(
                 method="POST",
                 endpoint=f"job/{job_id}/batch",
@@ -250,7 +244,7 @@ class BulkSFType(CallableSF):
             * batch_id: The ID of the batch to get
         """
 
-        return asyncio.run(
+        return (
             self.call_salesforce(
                 method="GET",
                 endpoint=f"job/{job_id}/batch/{batch_id}",
@@ -261,17 +255,17 @@ class BulkSFType(CallableSF):
         )
 
     def _get_batch_results(
-        self, job_id: str, batch_id: str, operation: SFOperations
-    ) -> Iterable[JsonType]:
+        self, job_id: str, batch_id: str, operation: SFOperation
+    ) -> Iterator[JsonType]:
         """
         Retrieve a set of results from a completed job
         Wrapper for the async method `__get_batch_results(...)`
         """
-        return asyncio.run(self.__get_batch_results(job_id, batch_id, operation))  # type: ignore
+        return self.__get_batch_results(job_id, batch_id, operation)  # type: ignore
 
-    async def __get_batch_results(
-        self, job_id: str, batch_id: str, operation: SFOperations
-    ) -> AsyncIterable[JsonType]:
+    def __get_batch_results(
+        self, job_id: str, batch_id: str, operation: SFOperation
+    ) -> Iterator[JsonType]:
         """
         Retrieve a set of results from a completed job
         ---
@@ -283,7 +277,7 @@ class BulkSFType(CallableSF):
 
         endpoint = f"job/{job_id}/batch/{batch_id}/result"
 
-        response = await self.call_salesforce(
+        response = self.call_salesforce(
             method="GET",
             endpoint=endpoint,
         )
@@ -295,8 +289,8 @@ class BulkSFType(CallableSF):
         if operation not in ("query", "queryAll"):
             yield cast(JsonType, result)
         else:
-            for batch in cast(Iterable[str], result):
-                batch_query_response = await self.call_salesforce(
+            for batch in cast(Iterator[str], result):
+                batch_query_response = self.call_salesforce(
                     method="GET",
                     endpoint=f"{endpoint}/{batch}",
                 )

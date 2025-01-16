@@ -1,6 +1,14 @@
 # pyright: reportArgumentType=false
-from collections.abc import Callable, Hashable, Iterable, Mapping, Sequence
+from collections.abc import (
+    Callable,
+    Hashable,
+    Iterable,
+    Iterator,
+    Mapping,
+    Sequence,
+)
 from datetime import date as date_, datetime
+from enum import StrEnum
 from numbers import Number
 from typing import Any, Literal, Optional, TypedDict
 from urllib.parse import quote
@@ -19,16 +27,16 @@ class Proxies(TypedDict, total=False):
     socks5: str
 
 
-def to_mount(proxies: Proxies) -> dict[str, httpx.AsyncHTTPTransport]:
+def to_mount(proxies: Proxies) -> dict[str, httpx.HTTPTransport]:
     return {
-        protocol: httpx.AsyncHTTPTransport(proxy=proxy)  # pyright: ignore[reportArgumentType]
+        protocol: httpx.HTTPTransport(proxy=proxy)  # pyright: ignore[reportArgumentType]
         for protocol, proxy in proxies.items()
     }
 
 
-def to_url_mount(proxies: Proxies) -> dict[URLPattern, httpx.AsyncHTTPTransport]:
+def to_url_mount(proxies: Proxies) -> dict[URLPattern, httpx.HTTPTransport]:
     return {
-        URLPattern(protocol): httpx.AsyncHTTPTransport(proxy=proxy)
+        URLPattern(protocol): httpx.HTTPTransport(proxy=proxy)
         for protocol, proxy in proxies.items()
     }
 
@@ -36,17 +44,29 @@ def to_url_mount(proxies: Proxies) -> dict[URLPattern, httpx.AsyncHTTPTransport]
 type KwargsAny = date_ | str | Iterable[KwargsAny] | Number | None
 type URLMethod = Literal["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]
 type JsonType = None | int | str | bool | Sequence[JsonType] | Mapping[str, JsonType]
-type SFOperations = Literal["delete", "hardDelete", "insert", "query", "queryAll", "update", "upsert"]  # fmt:skip
+type SFOperation = Literal["delete", "hardDelete", "insert", "query", "queryAll", "update", "upsert"]  # fmt:skip
+type JobState = Literal["Aborted", "Failed", "Open", "UploadComplete", "InProgress", "JobComplete"]  # fmt:skip
+type ContentType = Literal["CSV", "JSON", "XML"]
+type LineEnding = Literal["LF", "CRLF"]
+
+
+class ColumnDelimiter(StrEnum):
+    BACKQUOTE = "BACKQUOTE"  # (`)
+    CARET = "CARET"  # (^)
+    COMMA = "COMMA"  # (,)
+    PIPE = "PIPE"  # (|)
+    SEMICOLON = "SEMICOLON"  # (;)
+    TAB = "TAB"  # (\t)
 
 
 class CallableSF:
-    client: httpx.AsyncClient
+    client: httpx.Client
     parse_float: Optional[Callable[[str], Any]]
     object_pairs_hook: Callable[
         [Sequence[tuple[Hashable, Any]]], Mapping[Hashable, Any]
     ] = dict[Hashable, Any]
 
-    async def call_salesforce(
+    def call_salesforce(
         self,
         method: URLMethod,
         endpoint: str,
@@ -73,15 +93,12 @@ class CallableSF:
             >>> response.status_code
             200
         """
+
         headers = headers or httpx.Headers()
+        headers.update(kwargs.pop("headers", {}))
+        headers.update(kwargs.pop("additional_headers", {}))
 
-        headers.update(self.client.headers.copy())
-        headers.update(kwargs.pop("headers", dict[str, Any]()))
-        headers.update(kwargs.pop("additional_headers", dict[str, Any]()))
-
-        response = await self.client.request(
-            method, endpoint, headers=headers, **kwargs
-        )
+        response = self.client.request(method, endpoint, headers=headers, **kwargs)
 
         try:
             response.raise_for_status()
@@ -141,11 +158,11 @@ def date_to_iso8601(date: date_ | datetime) -> str:
     return quote(iso_string, safe="")
 
 
-def list_from_generator[T](generator_function: Iterable[Iterable[T]]) -> list[T]:
+def list_from_generator[T](generator_function: Iterator[Iterator[T]]) -> list[T]:
     """Flattens a nested iterable into a single list.
 
     Parameters:
-        generator_function (Iterable[Iterable[T]]): A generator or iterable of iterables.
+        generator_function (Iterator[Iterator[T]]): A generator or iterable of iterables.
 
     Returns:
         list[T]: A flattened list containing all items from the nested iterables.

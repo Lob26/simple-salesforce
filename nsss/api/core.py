@@ -1,14 +1,18 @@
 # pyright: reportArgumentType=false
-import asyncio
 import html
 import json
 import logging
 import re
-from collections.abc import Mapping
+from collections.abc import (
+    Callable,
+    Hashable,
+    Iterator,
+    Mapping,
+    Sequence,
+)
 from functools import partial
 from typing import (
     IO,
-    TYPE_CHECKING,
     Any,
     Literal,
     NotRequired,
@@ -20,31 +24,24 @@ from typing import (
 )
 from urllib.parse import urlparse
 
-from httpx import AsyncClient as Client, HTTPStatusError
+from httpx import Client, HTTPStatusError, Response
 from starlette.status import HTTP_401_UNAUTHORIZED
 
 from nsss.__version__ import DEFAULT_API_VERSION
 from nsss.api import Bulk2SFHandler, BulkSFHandler, CompositeSFHandler, TypeSF
 from nsss.others import SalesforceLogin, SfdcMetadataApi
-from nsss.utils import CallableSF, exception_handler, to_url_mount
+from nsss.utils import (
+    CallableSF,
+    JsonType,
+    KwargsAny,
+    Proxies,
+    URLMethod,
+    exception_handler,
+    to_url_mount,
+)
 
-if TYPE_CHECKING:
-    from collections.abc import Callable, Hashable, Iterator, Sequence
-
-    from httpx import Response
-
-    from nsss.utils import (
-        JsonType,
-        KwargsAny,
-        Proxies,
-        URLMethod,
-    )
-
-    K = TypeVar("K", bound=Hashable)
-    V = TypeVar("V", bound=Any)
-else:
-    K = TypeVar("K")
-    V = TypeVar("V")
+K = TypeVar("K", bound=Hashable)
+V = TypeVar("V", bound=Any)
 
 logger = logging.getLogger(__name__)
 
@@ -510,7 +507,7 @@ class Salesforce(CallableSF):
             )
         return self._mdapi
 
-    async def _call_salesforce(
+    def _call_salesforce(
         self,
         method: URLMethod,
         endpoint: str,
@@ -521,9 +518,7 @@ class Salesforce(CallableSF):
     ) -> Response:
         """Utility method for performing HTTP call to Salesforce."""
         try:
-            response = await self.call_salesforce(
-                method, endpoint, self.headers, **kwargs
-            )
+            response = self.call_salesforce(method, endpoint, self.headers, **kwargs)
             if sforce_limit_info := response.headers.get("Sforce-Limit-Info"):
                 self.api_usage = self.parse_api_usage(sforce_limit_info)
             return response
@@ -537,7 +532,7 @@ class Salesforce(CallableSF):
                 self._refresh_session()
                 if retries == max_retries:
                     exception_handler(response, name)
-                return await self._call_salesforce(
+                return self._call_salesforce(
                     method, endpoint, name, retries=retries + 1, **kwargs
                 )
             exception_handler(response, name)
@@ -561,14 +556,12 @@ class Salesforce(CallableSF):
         """
         action = html.escape(action)
         json_data = json.dumps(data) if data else None
-        response = asyncio.run(
-            self._call_salesforce(
-                endpoint=f"data/v{self.sf_version}/tooling/{action}",
-                method=method,
-                name="toolingexecute",
-                data=json_data,
-                **kwargs,
-            )
+        response = self._call_salesforce(
+            endpoint=f"data/v{self.sf_version}/tooling/{action}",
+            method=method,
+            name="toolingexecute",
+            data=json_data,
+            **kwargs,
         )
 
         try:
@@ -597,14 +590,12 @@ class Salesforce(CallableSF):
         """
         action = html.escape(action)
         json_data = json.dumps(data) if data else None
-        response = asyncio.run(
-            self._call_salesforce(
-                endpoint=f"apexrest/{action}",
-                method=method,
-                name="apexexecute",
-                data=json_data,
-                **kwargs,
-            )
+        response = self._call_salesforce(
+            endpoint=f"apexrest/{action}",
+            method=method,
+            name="apexexecute",
+            data=json_data,
+            **kwargs,
         )
 
         try:
@@ -635,14 +626,12 @@ class Salesforce(CallableSF):
             * kwargs: Additional arguments passed to the request supported by httpx request\
                 (e.g., headers, cookies, etc.)
         """
-        response = asyncio.run(
-            self._call_salesforce(
-                endpoint=f"data/v{self.sf_version}/{path}",
-                method=method,
-                name=cast(str, kwargs.pop("name", "restful")),
-                params=params,
-                **kwargs,
-            )
+        response = self._call_salesforce(
+            endpoint=f"data/v{self.sf_version}/{path}",
+            method=method,
+            name=cast(str, kwargs.pop("name", "restful")),
+            params=params,
+            **kwargs,
         )
 
         try:
@@ -673,14 +662,12 @@ class Salesforce(CallableSF):
             * kwargs: Additional arguments passed to the request supported by httpx request\
                 (e.g., headers, cookies, etc.)
         """
-        response = asyncio.run(
-            self._call_salesforce(
-                endpoint=f"oauth2/{path}",
-                method=method,
-                name=cast(str, kwargs.pop("name", "oauth2")),
-                params=params,
-                **kwargs,
-            )
+        response = self._call_salesforce(
+            endpoint=f"oauth2/{path}",
+            method=method,
+            name=cast(str, kwargs.pop("name", "oauth2")),
+            params=params,
+            **kwargs,
         )
 
         try:

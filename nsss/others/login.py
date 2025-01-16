@@ -1,4 +1,3 @@
-import asyncio
 import base64
 import html
 import json
@@ -34,7 +33,7 @@ def SalesforceLogin(**kwargs: Any) -> tuple[str, str]:  # NOSONAR
         * organizationid: The organization ID for the username
         * sf_version: The Salesforce API version to use. For example "27.0"
         * proxies: The optional map of scheme to proxy server
-        * session: An existing httpx.AsyncClient instance to use for requests.\
+        * session: An existing httpx.Client instance to use for requests.\
                 This enables the use of httpx features not otherwise exposed by the library.
         * client_id: The ID of this client
         * domain: The domain to using for connecting to Salesforce.\
@@ -56,7 +55,7 @@ def SalesforceLogin(**kwargs: Any) -> tuple[str, str]:  # NOSONAR
     organizationid: Optional[str] = kwargs.get("organizationid")
     sf_version: str = kwargs["sf_version"]
     proxies: Optional[Proxies] = kwargs.get("proxies")
-    session: Optional[httpx.AsyncClient] = kwargs.get("session")
+    session: Optional[httpx.Client] = kwargs.get("session")
     client_id: Optional[str] = kwargs.get("client_id")
     domain: Literal["login"] | str = kwargs["domain"]
     instance_url: Optional[str] = kwargs.get("instance_url")
@@ -121,22 +120,20 @@ def SalesforceLogin(**kwargs: Any) -> tuple[str, str]:  # NOSONAR
     </soapenv:Body>
 </soapenv:Envelope>"""
     elif username and password and consumer_key and consumer_secret:
-        return asyncio.run(
-            token_login(
-                f"https://{domain}.salesforce.com/services/oauth2/token",
-                {
-                    "grant_type": "client_credentials",
-                    "client_id": consumer_key,
-                    "client_secret": consumer_secret,
-                    "username": html.unescape(username),
-                    "password": html.unescape(password) if password else None,
-                },
-                domain,
-                consumer_key,
-                None,
-                proxies,
-                session,
-            )
+        return token_login(
+            f"https://{domain}.salesforce.com/services/oauth2/token",
+            {
+                "grant_type": "client_credentials",
+                "client_id": consumer_key,
+                "client_secret": consumer_secret,
+                "username": html.unescape(username),
+                "password": html.unescape(password) if password else None,
+            },
+            domain,
+            consumer_key,
+            None,
+            proxies,
+            session,
         )
     elif username and password:
         # IP Filtering for non self-service users
@@ -172,35 +169,31 @@ def SalesforceLogin(**kwargs: Any) -> tuple[str, str]:  # NOSONAR
             else cast(str, privatekey).encode("utf-8")
         )
 
-        return asyncio.run(
-            token_login(
-                f"https://{token_domain}.salesforce.com/services/oauth2/token",
-                {
-                    "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
-                    "assertion": jwt.encode(payload, key, algorithm="RS256"),
-                },
-                domain,
-                consumer_key,
-                None,
-                proxies,
-                session,
-            )
+        return token_login(
+            f"https://{token_domain}.salesforce.com/services/oauth2/token",
+            {
+                "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
+                "assertion": jwt.encode(payload, key, algorithm="RS256"),
+            },
+            domain,
+            consumer_key,
+            None,
+            proxies,
+            session,
         )
     elif consumer_key and consumer_secret and domain not in ("login", "test", None):
         authorization = base64.b64encode(
             f"{consumer_key}:{consumer_secret}".encode()
         ).decode()
         headers = {"Authorization": f"Basic {authorization}"}
-        return asyncio.run(
-            token_login(
-                f"https://{domain}.salesforce.com/services/oauth2/token",
-                {"grant_type": "client_credentials"},
-                domain,
-                consumer_key,
-                httpx.Headers(headers),
-                proxies,
-                session,
-            )
+        return token_login(
+            f"https://{domain}.salesforce.com/services/oauth2/token",
+            {"grant_type": "client_credentials"},
+            domain,
+            consumer_key,
+            httpx.Headers(headers),
+            proxies,
+            session,
         )
     else:
         raise SalesforceAuthenticationFailed(
@@ -215,31 +208,29 @@ def SalesforceLogin(**kwargs: Any) -> tuple[str, str]:  # NOSONAR
         "SOAPAction": "login",
     }
 
-    return asyncio.run(
-        soap_login(
-            soap_url,
-            login_soap_request_body,
-            login_soap_request_headers,
-            proxies,
-            session,
-        )
+    return soap_login(
+        soap_url,
+        login_soap_request_body,
+        login_soap_request_headers,
+        proxies,
+        session,
     )
 
 
-async def token_login(
+def token_login(
     token_url: str,
     token_data: dict[str, Any],
     domain: str,
     consumer_key: str,
     headers: Optional[httpx.Headers],
     proxies: Optional[Proxies],
-    session: Optional[httpx.AsyncClient] = None,
+    session: Optional[httpx.Client] = None,
 ) -> tuple[str, str]:
     """Process OAuth 2.0 JWT Bearer Token Flow."""
-    async with session or httpx.AsyncClient(
+    with session or httpx.Client(
         headers=headers, mounts=to_mount(proxies) if proxies else None
     ) as client:
-        response = await client.post(token_url, data=token_data)
+        response = client.post(token_url, data=token_data)
 
     json_response: dict[str, str]
     try:
@@ -268,12 +259,12 @@ async def token_login(
         ) from exc
 
 
-async def soap_login(
+def soap_login(
     soap_url: str,
     request_body: str,
     login_soap_request_headers: dict[str, str],
     proxies: Optional[Proxies],
-    session: Optional[httpx.AsyncClient],
+    session: Optional[httpx.Client],
 ) -> tuple[str, str]:
     """
     Return a tuple of `(session_id, sf_instance)` where `session_id` is the\
@@ -285,13 +276,13 @@ async def soap_login(
         * request_body: The body of the SOAP request
         * login_soap_request_headers: The headers for the SOAP request
         * proxies: The optional map of scheme to proxy server
-        * session: An existing httpx.AsyncClient instance to use for requests.\
+        * session: An existing httpx.Client instance to use for requests.\
                 This enables the use of httpx features not otherwise exposed by the library.
     """
-    async with session or httpx.AsyncClient(
+    with session or httpx.Client(
         mounts=to_mount(proxies) if proxies else None
     ) as client:
-        response = await client.post(
+        response = client.post(
             soap_url,
             data=json.loads(request_body),
             headers=login_soap_request_headers,

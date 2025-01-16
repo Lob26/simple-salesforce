@@ -1,3 +1,6 @@
+from typing import NoReturn
+
+from httpx import Response
 from starlette.status import (
     HTTP_300_MULTIPLE_CHOICES,
     HTTP_400_BAD_REQUEST,
@@ -5,10 +8,6 @@ from starlette.status import (
     HTTP_403_FORBIDDEN,
     HTTP_404_NOT_FOUND,
 )
-from typing import TYPE_CHECKING, NoReturn
-
-if TYPE_CHECKING:
-    from httpx import Response
 
 
 class SalesforceError(Exception):
@@ -127,13 +126,14 @@ class SalesforceBulkV2ExtractError(SalesforceOperationError):
 
 
 def _exc_map(status_code: int) -> type[SalesforceError]:
-    return {
+    exc_map: dict[int, type[SalesforceError]] = {
         HTTP_300_MULTIPLE_CHOICES: SalesforceMoreThanOneRecord,
         HTTP_400_BAD_REQUEST: SalesforceMalformedRequest,
         HTTP_401_UNAUTHORIZED: SalesforceExpiredSession,
         HTTP_403_FORBIDDEN: SalesforceRefusedRequest,
         HTTP_404_NOT_FOUND: SalesforceResourceNotFound,
-    }.get(status_code, SalesforceGeneralError)
+    }
+    return exc_map.get(status_code, SalesforceGeneralError)
 
 
 def exception_handler(result: Response, name: str = "") -> NoReturn:

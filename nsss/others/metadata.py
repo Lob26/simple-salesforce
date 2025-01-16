@@ -1,4 +1,3 @@
-import asyncio
 from base64 import b64decode, b64encode
 from collections.abc import Mapping
 from pathlib import Path
@@ -32,6 +31,15 @@ class MetadataType:
         zeep_type: ComplexType | AnySimpleType,
         session_header: CompoundValue,
     ):
+        """
+        Initialize metadata type
+
+        Args:
+            name (str): Name of metadata type
+            service (ServiceProxy): Zeep service
+            zeep_type (ComplexType | AnySimpleType): Zeep type object
+            session_header (CompoundValue): Session Id header for Metadata API calls
+        """
         self._name = name
         self._service = service
         self._zeep_type = zeep_type
@@ -39,6 +47,13 @@ class MetadataType:
 
     @staticmethod
     def _handle_api_response(response: list[Any]) -> None:
+        """
+        Parses SaveResult and DeleteResult objects to identify if there was
+        an error, and raises exception accordingly
+
+        Args:
+            response (
+        """
         errors = [
             f"\n{result.fullName}: ({error.statusCode}, {error.message}), "
             for result in response
@@ -48,40 +63,30 @@ class MetadataType:
         assert not errors, "".join(errors)
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
-        return self._zeep_type(*args, **kwargs)
+        return self._zeep_type(*args, **kwargs)  # pyright: ignore[reportUnknownVariableType]
 
     def create(self, metadata: list[Any]) -> None:
-        response = self._service.createMetadata(
-            metadata, _soapheaders=[self._session_header]
-        )
+        response = cast(list[Any], self._service.createMetadata(metadata, _soapheaders=[self._session_header]))  # fmt:skip
         self._handle_api_response(response)
 
     def read(self, full_names: list[str]) -> list[Any] | Any:
-        response = self._service.readMetadata(
-            self._name, full_names, _soapheaders=[self._session_header]
-        )
+        response = cast(list[Any], self._service.readMetadata(self._name, full_names, _soapheaders=[self._session_header]))  # fmt:skip
         return response[0] if len(response) == 1 else response
 
     def update(self, metadata: list[Any]) -> None:
-        response = self._service.updateMetadata(
-            metadata, _soapheaders=[self._session_header]
-        )
+        response = cast(list[Any], self._service.updateMetadata(metadata, _soapheaders=[self._session_header]))  # fmt:skip
         self._handle_api_response(response)
 
     def upsert(self, metadata: list[Any]) -> None:
-        response = self._service.upsertMetadata(
-            metadata, _soapheaders=[self._session_header]
-        )
+        response = cast(list[Any], self._service.upsertMetadata(metadata, _soapheaders=[self._session_header]))  # fmt:skip
         self._handle_api_response(response)
 
     def delete(self, full_names: list[dict[str, Any]]) -> None:
-        response = self._service.deleteMetadata(
-            self._name, full_names, _soapheaders=[self._session_header]
-        )
+        response = cast(list[Any], self._service.deleteMetadata(self._name, full_names, _soapheaders=[self._session_header]))  # fmt:skip
         self._handle_api_response(response)
 
     def rename(self, old_full_name: str, new_full_name: str) -> None:
-        result = self._service.renameMetadata(
+        result: Any = self._service.renameMetadata(
             self._name,
             old_full_name,
             new_full_name,
@@ -90,7 +95,7 @@ class MetadataType:
         self._handle_api_response([result])
 
     def describe(self) -> Any:
-        return self._service.describeValueType(
+        return self._service.describeValueType(  # pyright:ignore[reportUnknownVariableType]
             f"{{http://soap.sforce.com/2006/04/metadata}}{self._name}",
             _soapheaders=[self._session_header],
         )
@@ -105,7 +110,7 @@ class SfdcMetadataApi(CallableSF):
 
     def __init__(
         self,
-        session: httpx.AsyncClient,
+        session: httpx.Client,
         session_id: str,
         instance: str,
         metadata_url: str,
@@ -130,9 +135,7 @@ class SfdcMetadataApi(CallableSF):
             "{http://soap.sforce.com/2006/04/metadata}MetadataBinding",
             self.metadata_url,
         )
-        self._session_header = self._client.get_element("ns0:SessionHeader")(
-            sessionId=self._session_id
-        )
+        self._session_header = cast(CompoundValue, self._client.get_element("ns0:SessionHeader")(sessionId=self._session_id))  # fmt:skip
 
     def __getattr__(self, item: str) -> MetadataType:
         return MetadataType(
@@ -155,7 +158,7 @@ class SfdcMetadataApi(CallableSF):
     def deploy(
         self, zipfile: str | IO[bytes], sandbox: bool, **kwargs: Any
     ) -> tuple[str | None, str | None]:
-        attributes = {
+        attributes: dict[str, Any] = {
             "client": kwargs.get("client", "simple_salesforce_metahelper"),
             "checkOnly": kwargs.get("checkOnly", False),
             "sessionId": self._session_id,
@@ -188,14 +191,12 @@ class SfdcMetadataApi(CallableSF):
 
         request = DEPLOY_MSG.format(**attributes)
         headers = {"Content-Type": TEXTXML, "SOAPAction": "deploy"}
-        result = asyncio.run(
-            self.call_salesforce(
-                method="POST",
-                endpoint="deployRequest",
-                headers=self.headers,
-                additional_headers=headers,
-                data=request,
-            )
+        result = self.call_salesforce(
+            method="POST",
+            endpoint="deployRequest",
+            headers=self.headers,
+            additional_headers=headers,
+            data=request,
         )
 
         async_process_id = fromstring(result.text).findtext(
@@ -223,7 +224,7 @@ class SfdcMetadataApi(CallableSF):
         return b64encode(raw).decode()
 
     def _retrieve_deploy_result(self, async_process_id: str, **kwargs: Any) -> Element:
-        attributes = {
+        attributes: dict[str, Any] = {
             "client": kwargs.get("client", "simple_salesforce_metahelper"),
             "sessionId": self._session_id,
             "asyncProcessId": async_process_id,
@@ -232,14 +233,12 @@ class SfdcMetadataApi(CallableSF):
         request = CHECK_DEPLOY_STATUS_MSG.format(**attributes)
         headers = {"Content-type": TEXTXML, "SOAPAction": "checkDeployStatus"}
 
-        res = asyncio.run(
-            self.call_salesforce(
-                endpoint=f"deployRequest/{async_process_id}",
-                method="POST",
-                headers=self.headers,
-                additional_headers=headers,
-                data=request,
-            )
+        res = self.call_salesforce(
+            endpoint=f"deployRequest/{async_process_id}",
+            method="POST",
+            headers=self.headers,
+            additional_headers=headers,
+            data=request,
         )
         result = fromstring(res.text).find(
             "soapenv:Body/mt:checkDeployStatusResponse/mt:result", self._XML_NAMESPACES
@@ -298,7 +297,7 @@ class SfdcMetadataApi(CallableSF):
             )
         ]
 
-        deployment_detail = {
+        deployment_detail: dict[str, Any] = {
             "total_count": result.findtext(
                 "mt:numberComponentsTotal", None, self._XML_NAMESPACES
             ),
@@ -310,7 +309,7 @@ class SfdcMetadataApi(CallableSF):
             ),
             "errors": deployment_errors,
         }
-        unit_test_detail = {
+        unit_test_detail: dict[str, Any] = {
             "total_count": result.findtext(
                 "mt:numberTestsTotal", None, self._XML_NAMESPACES
             ),
@@ -342,7 +341,7 @@ class SfdcMetadataApi(CallableSF):
             for metadata_type, members in kwargs.get("unpackaged", {}).items()
         )
 
-        attributes = {
+        attributes: dict[str, Any] = {
             "client": client,
             "sessionId": self._session_id,
             "apiVersion": self._api_version,
@@ -352,14 +351,12 @@ class SfdcMetadataApi(CallableSF):
         request = RETRIEVE_MSG.format(**attributes)
         headers = {"Content-type": TEXTXML, "SOAPAction": "retrieve"}
 
-        res = asyncio.run(
-            self.call_salesforce(
-                endpoint=f"deployRequest/{async_process_id}",
-                method="POST",
-                headers=self.headers,
-                additional_headers=headers,
-                data=request,
-            )
+        res = self.call_salesforce(
+            endpoint=f"deployRequest/{async_process_id}",
+            method="POST",
+            headers=self.headers,
+            additional_headers=headers,
+            data=request,
         )
 
         async_process_id_ = fromstring(res.text).findtext(
@@ -378,7 +375,7 @@ class SfdcMetadataApi(CallableSF):
     def retrieve_retrieve_result(
         self, async_process_id: str, include_zip: str, **kwargs: Any
     ) -> Element:
-        attributes = {
+        attributes: dict[str, Any] = {
             "client": kwargs.get("client", "simple_salesforce_metahelper"),
             "sessionId": self._session_id,
             "asyncProcessId": async_process_id,
@@ -386,14 +383,12 @@ class SfdcMetadataApi(CallableSF):
         }
         request = CHECK_RETRIEVE_STATUS_MSG.format(**attributes)
         headers = {"Content-type": TEXTXML, "SOAPAction": "checkRetrieveStatus"}
-        res = asyncio.run(
-            self.call_salesforce(
-                endpoint=f"deployRequest/{async_process_id}",
-                method="POST",
-                headers=self.headers,
-                additional_headers=headers,
-                data=request,
-            )
+        res = self.call_salesforce(
+            endpoint=f"deployRequest/{async_process_id}",
+            method="POST",
+            headers=self.headers,
+            additional_headers=headers,
+            data=request,
         )
 
         result = fromstring(res.text).find(

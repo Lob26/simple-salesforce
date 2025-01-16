@@ -47,7 +47,7 @@ If you have the full URL of your instance (perhaps including the schema, as is i
 
 There are also four means of authentication, one that uses username, password and security token; one that uses IP filtering, username, password  and organizationId, one that uses a private key to sign a JWT, and one for connected apps that uses username, password, consumer key, and consumer secret;
 
-To login using the security token method, simply include the Salesforce method and pass in your Salesforce username, password and token (this is usually provided when you change your password):
+To login using the security token method, simply include the Salesforce method and pass in your Salesforce username, password and token (this is usually provided when you change your password or go to profile -> settings -> Reset My Security Token):
 
 .. code-block:: python
 
@@ -422,6 +422,55 @@ To retrieve a list of top level description of instance metadata, user:
 
     for x in sf.describe()["sobjects"]:
       print x["label"]
+
+Using Composite
+---------------
+
+You can use this library to access Composite API functions, which can
+process multiple records in a single call up to certain implementation
+limits.  You must open the connection with ``version="42.0"`` or later to
+use this API.
+
+`Create new records <https://developer.salesforce.com/docs/atlas.en-us.api_rest.meta/api_rest/resources_composite_sobjects_collections_create.htm>`:
+
+.. code-block:: python
+    records = [{'attributes':{'type':'Contact'},'LastName':'Smith','Email':'example@example.com'},
+               {'attributes':{'type':'Contact'},'LastName':'Jones','Email':'test@test.com'}]
+    sf.composite.create(records)
+`Update existing records <https://developer.salesforce.com/docs/atlas.en-us.api_rest.meta/api_rest/resources_composite_sobjects_collections_update.htm>`:
+
+.. code-block:: python
+    records = [{'attributes':{'type':'Contact'}, 'Id': '0000000000AAAAA', 'Email': 'examplenew@example.com'},
+               {'attributes':{'type':'Contact'}, 'Id': '0000000000BBBBB', 'Email': 'testnew@test.com'}]
+    sf.composite.update(records)
+`Retrieve multiple records <https://developer.salesforce.com/docs/atlas.en-us.api_rest.meta/api_rest/resources_composite_sobjects_collections_retrieve.htm>`
+of the same type, returning only selected fields:
+
+.. code-block:: python
+    sf.composite.Contact.get(['0000000000AAAAA', '0000000000BBBBB'], ['Id', 'Email'])
+`Delete records <https://developer.salesforce.com/docs/atlas.en-us.api_rest.meta/api_rest/resources_composite_sobjects_collections_delete.htm>`:
+
+.. code-block:: python
+    sf.composite.delete(['0000000000AAAAA', '0000000000BBBBB'])
+`Create trees of related records <https://developer.salesforce.com/docs/atlas.en-us.api_rest.meta/api_rest/resources_composite_sobject_tree.htm>`:
+
+    records = [{
+        "attributes" : {"type" : "Account", "referenceId" : "ref1"},
+        "name": "SampleAccount1",
+        "Contacts" : {
+          "records" : [{
+             "attributes" : {"type" : "Contact", "referenceId" : "ref2"},
+             "lastname" : "Smith",
+             "email" : "example@example.com"
+             },{
+             "attributes" : {"type" : "Contact", "referenceId" : "ref3"},
+             "lastname" : "Jones",
+             "email" : "test@test.com.com"
+             }]
+          }
+    }]
+
+    sf.composite.Account.tree_create(records)
 
 
 Using Bulk

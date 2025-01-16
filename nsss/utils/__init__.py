@@ -1,9 +1,11 @@
 from .base import (
     CallableSF,
+    ColumnDelimiter,
     JsonType,
     KwargsAny,
+    LineEnding,
     Proxies,
-    SFOperations,
+    SFOperation,
     URLMethod,
     fetch_unique_xml_element_value,
     list_from_generator,
@@ -24,10 +26,12 @@ from .exceptions import (
 __all__ = [
     # base
     "CallableSF",
+    "ColumnDelimiter",
     "JsonType",
     "KwargsAny",
+    "LineEnding",
     "Proxies",
-    "SFOperations",
+    "SFOperation",
     "URLMethod",
     "fetch_unique_xml_element_value",
     "list_from_generator",

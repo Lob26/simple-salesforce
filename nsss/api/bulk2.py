@@ -1,3 +1,5 @@
+from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 import json
 from collections.abc import (
     Callable,
@@ -10,13 +12,17 @@ from collections.abc import (
 import re
 from typing import (
     Any,
+    AnyStr,
     Literal,
+    NotRequired,
     TypeVar,
+    TypedDict,
     cast,
     overload,
 )
 
 from httpx import Client, Headers
+from more_itertools import chunked
 
 from nsss.utils import (
     CallableSF,
@@ -26,20 +32,29 @@ from nsss.utils import (
     to_url_mount,
     LineEnding,
 )
-from nsss.utils.base import ColumnDelimiter
+from nsss.utils.base import ColumnDelimiter, JobState
 from nsss.utils.exceptions import (
     SalesforceBulkV2ExtractError,
     SalesforceBulkV2LoadError,
+    SalesforceOperationError,
 )
 
 K = TypeVar("K", bound=Hashable)
 V = TypeVar("V", bound=Any)
 
-MAX_INGEST_JOB_FILE_SIZE = 100 * 1024 * 1024
-MAX_INGEST_JOB_PARALLELISM = 10  # TODO: ? Salesforce limits
-DEFAULT_QUERY_PAGE_SIZE = 50000
+DEFAULT_WAIT_TIMEOUT_SECONDS = 24 * 60 * 60  # 24 hours
+MAX_CHECK_INTERVAL_SECONDS = 2  # 2 seconds
 JSON_CONTENT_TYPE = "application/json"
 CSV_CONTENT_TYPE = "text/csv; charset=UTF-8"
+
+# https://developer.salesforce.com/docs/atlas.en-us.242.0
+# .salesforce_app_limits_cheatsheet.meta/salesforce_app_limits_cheatsheet
+# /salesforce_app_limits_platform_bulkapi.htm
+# https://developer.salesforce.com/docs/atlas.en-us.api_asynch.meta
+# /api_asynch/datafiles_prepare_csv.htm
+MAX_INGEST_JOB_FILE_SIZE = 100 * 1024 * 1024  # 100 MiB
+MAX_INGEST_JOB_PARALLELISM = 10  # TODO: ? Salesforce limits
+DEFAULT_QUERY_PAGE_SIZE = 50000
 
 _delimiter_char = {
     ColumnDelimiter.BACKQUOTE: "`",
@@ -53,6 +68,13 @@ _line_ending_char = {
     "LF": "\n",
     "CRLF": "\r\n",
 }
+
+
+class BulkQueryResult(TypedDict):
+    locator: str
+    number_of_records: int
+    records: str
+    file: NotRequired[str]
 
 
 class Bulk2SFHandler:
@@ -128,6 +150,260 @@ class Bulk2SFType(CallableSF):
         self.parse_float = parse_float
         self.object_pairs_hook = object_pairs_hook  # type: ignore
 
+    def insert(
+        self,
+        *,
+        csv_file: str | None = None,
+        records: list[dict[str, str]] | None = None,
+        batch_size: int | None = None,
+        concurrency: int = 1,
+        column_delimiter: ColumnDelimiter = ColumnDelimiter.COMMA,
+        line_ending: LineEnding = "LF",
+        wait: int = 5,
+    ):
+        """Insert records"""
+        return self._upload_file(
+            "insert",
+            csv_file=csv_file,
+            records=self._convert_dict_to_csv(
+                records,  # type: ignore
+                column_delimiter=column_delimiter,
+                line_ending=line_ending,
+            ),
+            batch_size=batch_size,
+            column_delimiter=column_delimiter,
+            line_ending=line_ending,
+            concurrency=concurrency,
+            wait=wait,
+        )
+
+    create = insert
+
+    def query(
+        self,
+        *,
+        query: str,
+        max_records: int = DEFAULT_QUERY_PAGE_SIZE,
+        column_delimiter: ColumnDelimiter = ColumnDelimiter.COMMA,
+        line_ending: LineEnding = "LF",
+        wait: int = 5,
+    ) -> Iterator[str]:
+        """
+        Bulk 2.0 query
+        ---
+
+        Args:
+            * query: The SOQL query to be performed
+            * max_records: The maximum number of records to retrieve per batch
+        """
+        res = self.create_job(
+            "query",
+            query=query,
+            column_delimiter=column_delimiter,
+            line_ending=line_ending,
+        )
+        job_id = res["id"]
+        self.wait_for_job(job_id, True, wait)
+
+        locator = "INIT"
+        while locator:
+            if locator == "INIT":
+                locator = ""
+            result = self.get_query_results(job_id, locator, max_records)
+            locator = result["locator"]
+            yield result["records"]
+
+    read = query
+
+    def query_all(
+        self,
+        *,
+        query: str,
+        max_records: int = DEFAULT_QUERY_PAGE_SIZE,
+        column_delimiter: ColumnDelimiter = ColumnDelimiter.COMMA,
+        line_ending: LineEnding = "LF",
+        wait: int = 5,
+    ) -> Iterator[str]:
+        """
+        Bulk 2.0 queryAll
+        ---
+
+        Args:
+            * query: The SOQL query to be performed
+            * max_records: The maximum number of records to retrieve per batch
+        """
+        res = self.create_job(
+            "queryAll",
+            query=query,
+            column_delimiter=column_delimiter,
+            line_ending=line_ending,
+        )
+        job_id = res["id"]
+        self.wait_for_job(job_id, True, wait)
+
+        locator = "INIT"
+        while locator:
+            if locator == "INIT":
+                locator = ""
+            result = self.get_query_results(job_id, locator, max_records)
+            locator = result["locator"]
+            yield result["records"]
+
+    queryAll = query_all
+    read_all = query_all
+
+    def update(
+        self,
+        *,
+        csv_file: str | None = None,
+        records: list[dict[str, str]] | None = None,
+        batch_size: int | None = None,
+        column_delimiter: ColumnDelimiter = ColumnDelimiter.COMMA,
+        line_ending: LineEnding = "LF",
+        wait: int = 5,
+    ) -> list[dict[str, int]]:
+        """Update records"""
+        return self._upload_file(
+            "update",
+            csv_file=csv_file,
+            records=self._convert_dict_to_csv(
+                records,  # type: ignore
+                column_delimiter=column_delimiter,
+                line_ending=line_ending,
+            ),
+            batch_size=batch_size,
+            column_delimiter=column_delimiter,
+            line_ending=line_ending,
+            wait=wait,
+        )
+
+    def upsert(
+        self,
+        *,
+        csv_file: str | None = None,
+        records: list[dict[str, str]] | None = None,
+        external_id_field: str = "Id",
+        batch_size: int | None = None,
+        column_delimiter: ColumnDelimiter = ColumnDelimiter.COMMA,
+        line_ending: LineEnding = "LF",
+        wait: int = 5,
+    ):
+        """Upsert records based on a unique identifier"""
+        return self._upload_file(
+            "upsert",
+            csv_file=csv_file,
+            records=self._convert_dict_to_csv(
+                records,  # type: ignore
+                column_delimiter=column_delimiter,
+                line_ending=line_ending,
+            ),
+            batch_size=batch_size,
+            column_delimiter=column_delimiter,
+            line_ending=line_ending,
+            external_id_field=external_id_field,
+            wait=wait,
+        )
+
+    def soft_delete(
+        self,
+        *,
+        csv_file: str | None = None,
+        records: list[dict[str, str]] | None = None,
+        batch_size: int | None = None,
+        column_delimiter: ColumnDelimiter = ColumnDelimiter.COMMA,
+        line_ending: LineEnding = "LF",
+        external_id_field: str | None = None,
+        wait: int = 5,
+    ):
+        """Soft delete records"""
+        return self._upload_file(
+            "delete",
+            csv_file=csv_file,
+            records=self._convert_dict_to_csv(
+                records,  # type: ignore
+                column_delimiter=column_delimiter,
+                line_ending=line_ending,
+            ),
+            batch_size=batch_size,
+            column_delimiter=column_delimiter,
+            line_ending=line_ending,
+            external_id_field=external_id_field,
+            wait=wait,
+        )
+
+    delete = soft_delete
+
+    def hard_delete(
+        self,
+        *,
+        csv_file: str | None = None,
+        records: list[dict[str, str]] | None = None,
+        batch_size: int | None = None,
+        column_delimiter: ColumnDelimiter = ColumnDelimiter.COMMA,
+        line_ending: LineEnding = "LF",
+        wait: int = 5,
+    ):
+        """Hard delete records"""
+        return self._upload_file(
+            "hardDelete",
+            csv_file=csv_file,
+            records=self._convert_dict_to_csv(
+                records,  # type: ignore
+                column_delimiter=column_delimiter,
+                line_ending=line_ending,
+            ),
+            batch_size=batch_size,
+            column_delimiter=column_delimiter,
+            line_ending=line_ending,
+            wait=wait,
+        )
+
+    def download(
+        self,
+        *,
+        query: str,
+        path: str,
+        max_records: int = DEFAULT_QUERY_PAGE_SIZE,
+        column_delimiter: ColumnDelimiter = ColumnDelimiter.COMMA,
+        line_ending: LineEnding = "LF",
+        wait: int = 5,
+    ):
+        """
+        Bulk 2.0 query stream to file, avoiding high memory usage
+
+        Args:
+            * query: The SOQL query to be performed
+            * path: The path to save the file
+        """
+        import os
+
+        if not os.path.exists(path):
+            raise SalesforceBulkV2LoadError(f"Path not found: {path}")
+
+        res = self.create_job(
+            "query",
+            query=query,
+            column_delimiter=column_delimiter,
+            line_ending=line_ending,
+        )
+        job_id = res["id"]
+        self.wait_for_job(job_id, True, wait)
+
+        results = []
+        locator = "INIT"
+        while locator:
+            if locator == "INIT":
+                locator = ""
+
+            endpoint = f"{self._get_endpoint(job_id, True)}/results"
+            params = {
+                "maxRecords": max_records,
+                "locator": locator,
+            }
+
+            locator = result["locator"]
+            results.apend(result)
+
     @overload
     @staticmethod
     def _count_csv(
@@ -198,8 +474,7 @@ class Bulk2SFType(CallableSF):
             import os
 
             with open(filename, encoding="utf-8", mode="r") as bis:
-                header = bis.readline()
-                lines = bis.readlines()
+                header, *lines = bis.readlines()
             _max_records = max(max_records, len(lines))
             _max_bytes = min(
                 os.path.getsize(filename), MAX_INGEST_JOB_FILE_SIZE - 1 * 1024 * 1024
@@ -243,10 +518,46 @@ class Bulk2SFType(CallableSF):
             yield records_size, header + "".join(buff)
 
     @staticmethod
+    def _convert_dict_to_csv(
+        data: list[dict[str, str]],
+        column_delimiter: ColumnDelimiter = ColumnDelimiter.COMMA,
+        line_ending: LineEnding = "LF",
+    ) -> str | None:
+        """Convert a list of dictionaries to a CSV like object"""
+        if not data:
+            return None
+
+        from csv import DictWriter
+        from io import StringIO
+
+        keys = {key for d in data for key in d.keys()}
+        file = StringIO()
+        writer = DictWriter(
+            file,
+            fieldnames=keys,
+            delimiter=_delimiter_char[column_delimiter],
+            lineterminator=_line_ending_char[line_ending],
+        )
+        writer.writeheader()
+        writer.writerows(data)
+        return file.getvalue()
+
+    @staticmethod
     def _get_endpoint(job_id: str | None, is_query: bool) -> str:
         """Construct bulk 2.0 API request URL"""
         url = "query" if is_query else "ingest"
         return f"{url}/{job_id}" if job_id else url
+
+    @staticmethod
+    def _get_headers(request_ct: str | None, response_ct: str | None):
+        """Utility function to replicate a common set of headers"""
+        return cast(
+            Headers,
+            {
+                "Content-Type": request_ct or JSON_CONTENT_TYPE,
+                "Accept": response_ct or JSON_CONTENT_TYPE,
+            },
+        )
 
     def create_job(
         self,
@@ -280,16 +591,10 @@ class Bulk2SFType(CallableSF):
         if is_query:
             if not query:
                 raise SalesforceBulkV2ExtractError("Query is required for query jobs")
-            headers = cast(
-                Headers,
-                {"Content-Type": JSON_CONTENT_TYPE, "Accept": CSV_CONTENT_TYPE},
-            )
+            headers = self._get_headers(JSON_CONTENT_TYPE, CSV_CONTENT_TYPE)
             payload["query"] = query
         else:
-            headers = cast(
-                Headers,
-                {"Content-Type": CSV_CONTENT_TYPE, "Accept": JSON_CONTENT_TYPE},
-            )
+            headers = self._get_headers(CSV_CONTENT_TYPE, JSON_CONTENT_TYPE)
             payload["object"] = self.object_name
             payload["contentType"] = "CSV"
 
@@ -330,12 +635,155 @@ class Bulk2SFType(CallableSF):
         wait: bool = True,
     ): ...
 
-    @staticmethod
     def wait_for_job(
+        self,
         job_id: str,
-        wait: bool = True,
-        seconds: int = 5,
-    ): ...
+        is_query: bool,
+        wait: float = 0.5,
+    ) -> Literal["JobComplete"]:
+        """Wait for job completion or timeout"""
+        from datetime import datetime, timedelta
+        from time import sleep
+        from math import exp
+
+        expiration_time = datetime.now() + timedelta(seconds=DEFAULT_WAIT_TIMEOUT_SECONDS)  # fmt:skip
+        job_status: JobState = "InProgress" if is_query else "Open"
+        delay_timeout = 0.0
+        delay_cnt = 0
+        sleep(wait)
+        while datetime.now() < expiration_time:
+            job_info = self.get_job(job_id, is_query)
+            job_status: JobState = job_info["state"]
+            if job_status == "JobComplete":
+                return job_status
+            elif job_status in ("Failed", "Aborted"):
+                error_msg = job_info.get("errorMessage", job_info)
+                raise SalesforceOperationError(
+                    f"Job {job_id} failed with status {job_status}: {error_msg}"
+                )
+
+            if delay_timeout < MAX_CHECK_INTERVAL_SECONDS:
+                delay_timeout = wait + exp(delay_cnt) / 1000
+                delay_cnt += 1
+            sleep(delay_timeout)
+        raise SalesforceOperationError(
+            f"Job {job_id} did not complete within the timeout period. Current status: {job_status}"
+        )
+
+    def get_query_results(
+        self, job_id: str, locator: str = "", max_records: int = DEFAULT_QUERY_PAGE_SIZE
+    ) -> BulkQueryResult:
+        """Get results for a query job"""
+        endpoint = f"{Bulk2SFType._get_endpoint(job_id, True)}/results"
+
+        params: dict[str, str | int] = {"maxRecords": max_records}
+        if locator and locator != "null":
+            params["locator"] = locator
+
+        headers = Bulk2SFType._get_headers(JSON_CONTENT_TYPE, CSV_CONTENT_TYPE)
+        result = self.call_salesforce(
+            "GET",
+            endpoint,
+            params=params,
+            headers=headers,
+        )
+        locator = result.headers.get("Sforce-Locator", "null")
+
+        if locator == "null":
+            locator = ""
+
+        record_number = int(result.headers["Sforce-NumberOfRecords"])
+        return {
+            "locator": locator,
+            "number_of_records": record_number,
+            "records": self._filter_null_bytes(result.text),
+        }
+
+    @staticmethod
+    def _filter_null_bytes(b: AnyStr) -> AnyStr:
+        """
+        Filter out null bytes from a byte string
+        https://github.com/airbytehq/airbyte/issues/8300
+        """
+        if isinstance(b, str):
+            return b.replace("\x00", "")
+        if isinstance(b, bytes):
+            return b.replace(b"\x00", b"")
+        raise TypeError("Expected str or bytes")
+
+    def _upload_file(
+        self,
+        operation: SFOperation,
+        *,
+        csv_file: str | None = None,
+        records: str | None = None,
+        batch_size: int | None = None,
+        column_delimiter: ColumnDelimiter = ColumnDelimiter.COMMA,
+        line_ending: LineEnding = "LF",
+        external_id_field: str | None = None,
+        wait: int = 5,
+        concurrency: int = 1,
+    ):
+        """Upload CSV file to Salesforce"""
+        if csv_file and records:
+            raise SalesforceBulkV2LoadError("Cannot include both file and records")
+        if not records and csv_file:
+            import os
+
+            if not os.path.exists(csv_file):
+                raise SalesforceBulkV2LoadError(f"File not found: {csv_file}")
+
+        if operation in ("delete", "hardDelete"):
+            assert csv_file, "File is required for delete operations"
+
+            with open(csv_file, encoding="utf-8", mode="r") as bis:
+                header = (
+                    bis.readline().rstrip().split(_delimiter_char[column_delimiter])
+                )
+                if len(header) != 1:
+                    raise SalesforceBulkV2LoadError(
+                        f"InvalidBatch: The {operation!r} batch must contain only ids, {header}"
+                    )
+
+        workers = min(concurrency, MAX_INGEST_JOB_PARALLELISM)
+        split_data = (
+            self._split_csv(filename=csv_file, max_records=batch_size)
+            if csv_file
+            else self._split_csv(records=records, max_records=batch_size)
+        )
+
+        results: list[dict[str, int]] = []
+        if workers == 1:
+            results.extend(
+                [
+                    self._upload_data(
+                        operation,
+                        data,
+                        column_delimiter,
+                        line_ending,
+                        external_id_field,
+                        wait,
+                    )
+                    for data in split_data
+                ]
+            )
+        else:
+            # OOM is possible if the file is too large
+            for chunks in chunked(split_data, n=workers):
+                workers = min(workers, len(chunks))
+
+                with ThreadPoolExecutor(max_workers=workers) as pool:
+                    multi_thread_worker = partial(
+                        self._upload_data,
+                        operation,
+                        column_delimiter=column_delimiter,
+                        line_ending=line_ending,
+                        external_id_field=external_id_field,
+                        wait=wait,
+                    )
+                    results.extend(pool.map(multi_thread_worker, chunks))
+
+        return results
 
     def _upload_data(
         self,
